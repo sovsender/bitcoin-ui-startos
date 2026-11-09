@@ -1,0 +1,84 @@
+name: Check upstream
+
+# Opens an issue when the upstream package repository has commits on master
+# that this fork lacks, and closes it once the fork has synced.
+on:
+  schedule:
+    - cron: '23 15 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Compare this fork's master with upstream's
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM: Start9-Community/umbrel-bitcoin-ui-startos
+        run: |
+          set -euo pipefail
+
+          title_pattern='^Upstream has new commits up to [0-9a-f]{7}$'
+          issues=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 200 --json number,title,state)
+
+          # Base is this fork, head is upstream: ahead_by counts the upstream commits this fork lacks.
+          compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/master...${UPSTREAM/\//:}:master")
+          missing=$(jq -r .ahead_by <<<"$compare")
+
+          if [ "$missing" -eq 0 ]; then
+            echo "Up to date: this fork has every commit on $UPSTREAM master."
+            jq -r --arg p "$title_pattern" '.[] | select(.state == "OPEN" and (.title | test($p))) | .number' <<<"$issues" \
+              | while read -r n; do
+                  gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "The fork has every upstream commit now."
+                done
+            exit 0
+          fi
+
+          head=$(gh api "repos/$UPSTREAM/commits/master" --jq .sha)
+          title="Upstream has new commits up to ${head:0:7}"
+          if jq -e --arg t "$title" 'any(.[]; .title == $t)' <<<"$issues" >/dev/null; then
+            echo "An issue for upstream ${head:0:7} already exists."
+            exit 0
+          fi
+
+          version_of() {
+            gh api -H 'Accept: application/vnd.github.raw' "repos/$1/contents/startos/versions/current.ts" \
+              | grep -oP -m1 "version: '\K[^']+"
+          }
+          upstream_version=$(version_of "$UPSTREAM")
+          fork_version=$(version_of "$GITHUB_REPOSITORY")
+          if [ "$upstream_version" = "$fork_version" ]; then
+            versions="Both repositories are at package version \`$fork_version\`, so syncing publishes nothing new to the registry."
+          else
+            versions="Upstream is at package version \`$upstream_version\` and this fork is at \`$fork_version\`. Once the fork is synced, Tag and Release publishes the version on master to the registry by itself."
+          fi
+
+          # A code block keeps "#7" or "@name" in a subject from linking to this repo's issues or notifying anyone.
+          commits=$(jq -r '.commits[] | "\(.sha[0:7]) \(.commit.message | split("\n")[0])"' <<<"$compare")
+          [ "$missing" -eq 1 ] && noun=commit || noun=commits
+
+          body=$(cat <<EOF
+          [$UPSTREAM]($GITHUB_SERVER_URL/$UPSTREAM) has $missing $noun on \`master\` that this fork lacks ([compare]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/master...${UPSTREAM/\//:}:master)):
+
+          \`\`\`text
+          $commits
+          \`\`\`
+
+          $versions
+
+          To take them, open the [repository page]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY), click **Sync fork**, then **Update branch**. Don't choose **Discard commits**: it drops this fork's own commits, this workflow among them. This issue closes itself on the next check after the sync.
+          EOF
+          )
+
+          url=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body")
+          echo "Opened $url"
+
+          jq -r --arg p "$title_pattern" '.[] | select(.state == "OPEN" and (.title | test($p))) | .number' <<<"$issues" \
+            | while read -r n; do
+                gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "Superseded by #${url##*/}."
+              done

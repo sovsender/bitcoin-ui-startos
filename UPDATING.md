@@ -30,3 +30,7 @@ This package builds the UI from [`Start9-Community/umbrel-bitcoin`](https://gith
 
 2. Rebuild (`make`) and verify the UI starts and reaches the bitcoind dependency.
 3. Bump `version` / `releaseNotes` in `startos/versions/current.ts` per the packaging guide's [Versions](https://docs.start9.com/packaging/versions.html) page.
+
+## Syncing this fork
+
+This repository is a fork of [`Start9-Community/umbrel-bitcoin-ui-startos`](https://github.com/Start9-Community/umbrel-bitcoin-ui-startos). The **Check upstream** workflow runs every Monday and opens an issue when upstream's `master` has commits this fork lacks; click **Sync fork**, then **Update branch**, on the repository page, and Tag and Release publishes any version bump by itself. GitHub pauses scheduled workflows in a public repository after 60 days without activity; re-enable it from the repository's **Actions** tab.
